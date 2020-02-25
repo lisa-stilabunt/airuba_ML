@@ -1,0 +1,263 @@
+//for wemos d1 mini connect PM sensor to G, 5V, and TX pin to D5
+//and connect SHT sensor to G, 5V, SCL to D1 and SDA to D2
+
+//for NodeMCU connect PM sensor to G, 5V, and TX pin to D5
+//SCL is D1 and SDA is D2
+
+#define shutdownpin 13
+
+#include <SoftwareSerial.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266WiFiMulti.h>
+#include <InfluxDb.h>
+#include <Adafruit_SHT31.h>
+
+// Identification
+int unitid=6;
+const char* device = "zeta";
+
+// Influx creds
+#define INFLUXDB_HOST "IP-address"
+#define INFLUXDB_DB "database"
+#define INFLUXDB_USER "user"
+#define INFLUXDB_PASS "password"
+
+// WiFi parameters
+const char* ssid = "ssid"; //EDIT THIS TO USE YOUR WIFI
+const char* password = "password";  //not used if there is no password
+String thingName="thedata.php?unitid=6"; //thing for grouping all the data together 
+//const char* host = "dweet.io"; //host :) for tcp connection
+const char* host = "yourwebsite.com"; //host :) for tcp connection
+
+// Data stufff
+String arrayVariableNames[]={"unitid","pm1","pm2_5","pm10","fahren","humidity","temp"}; //THIS WAY WE REFER TO EACH VARIABLE AS AN INDEX IN THIS GLOBAL ARRAY.
+
+int hu=99;
+int pm1=99;
+int pm2_5=99;
+int pm10=99;
+int fahren=99;
+int tem=99;
+int arrayVariableValues[]={unitid,pm1,pm2_5,pm10,fahren,hu,tem};
+int numberVariables=sizeof(arrayVariableValues)/sizeof(arrayVariableValues[0]); //tells the number of arguments inside each array
+
+typedef enum {
+    FIRSTBYTE,
+    SECONDBYTE,
+    READ,
+    
+}dataparcer;
+
+int transmitPM01(char *thebuf)
+{
+  int PM01Val;
+  PM01Val=((thebuf[2]<<8) + thebuf[3]); //count PM1.0 value of the air detector module
+  return PM01Val;
+}
+ 
+//transmit PM Value to PC
+int transmitPM2_5(char *thebuf)
+{
+  int PM2_5Val;
+  PM2_5Val=((thebuf[4]<<8) + thebuf[5]);//count PM2.5 value of the air detector module
+  return PM2_5Val;
+  }
+ 
+//transmit PM Value to PC
+int transmitPM10(char *thebuf)
+{
+  int PM10Val;
+  PM10Val=((thebuf[6]<<8) + thebuf[7]); //count PM10 value of the air detector module  
+  return PM10Val;
+}
+
+Adafruit_SHT31 sht31 = Adafruit_SHT31();
+
+Influxdb influx(INFLUXDB_HOST);
+
+SoftwareSerial swSer(14, 12, false, 128);  //RX, TX --- GPIO pins for RX and TX, WeMos D1 Mini is D5, D6, NodeMCU is D5, D6
+
+void setup() { 
+  Serial.begin(9600);                                    
+
+  swSer.begin(9600);
+  Serial.println("SHT31 test");
+  if (! sht31.begin(0x44)) { // Set to 0x45 for alternate i2c addr
+    Serial.println("Couldn't find SHT31");
+  }
+  
+  //initialize and connect to wifi lan 
+  //WiFi.begin(ssid);   //use if wifi does not have a password
+  WiFi.begin(ssid, password);  //use if wifi has a password
+  int retries = 0; 
+  while ((WiFi.status() != WL_CONNECTED) && (retries < 15)) { 
+    retries++; 
+    delay(500); 
+    Serial.print("."); 
+    
+  } 
+  if(retries>14){ 
+    Serial.println(F("WiFi conection FAILED")); 
+  } 
+  if (WiFi.status() == WL_CONNECTED) { 
+    Serial.println(F("WiFi connected")); 
+    Serial.println("IP address: "); 
+    Serial.println(WiFi.localIP()); 
+    Serial.println(F("======================================================"));  
+  } 
+  Serial.println(F("Setup ready"));  
+
+  
+  pinMode(shutdownpin, OUTPUT);           // set pin to input
+  digitalWrite(shutdownpin, HIGH);
+  delay(30000);
+} 
+
+char a;
+char databuffer[32];
+uint8_t i_data=0;
+char mystring[10];
+bool dataready = false;
+dataparcer datastate = FIRSTBYTE;
+int PM01Value=0;          //define PM1.0 value of the air detector module
+int PM2_5Value=0;         //define PM2.5 value of the air detector module
+int PM10Value=0;         //define PM10 value of the air detector module
+
+
+void loop() {  
+
+
+//Reconnect the WIFI if it is out!!!!! <<<<<<<<<<<<<<<<<<<<<<<<<<<<
+  int retries = 0; 
+  while ((WiFi.status() != WL_CONNECTED) && (retries < 15)) { 
+    retries++; 
+    delay(500); 
+    Serial.print("."); 
+    
+  } 
+  if(retries>14){ 
+    ESP.restart();
+  }  
+
+  
+  // get data from PMS5003 sensor
+  while (swSer.available() > 0) {  //wait for data at software serial
+    a = swSer.read();
+
+    switch(datastate){
+      case FIRSTBYTE:
+        if (a == 0x42) {
+          datastate = SECONDBYTE;     
+        }
+        break;
+      case SECONDBYTE:
+        if (a == 0x4d) {
+          datastate = READ;          
+        }
+        break;
+      case READ:
+        databuffer[i_data] = a;
+        i_data++;
+        if(i_data>29){
+          datastate = FIRSTBYTE;
+          dataready = true;
+          i_data = 0;
+        }
+        break;
+      default:
+        break;
+    } 
+  }
+
+  if(dataready){
+
+    PM01Value = transmitPM01(databuffer); //count PM1.0 value of the air detector module
+    PM2_5Value = transmitPM2_5(databuffer);//count PM2.5 value of the air detector module
+    PM10Value = transmitPM10(databuffer); //count PM10 value of the air detector module 
+
+    arrayVariableValues[1]=PM01Value;//this is how you change values of the variables 
+    arrayVariableValues[2]=PM2_5Value;
+    arrayVariableValues[3]=PM10Value;
+    
+    dataready = false;
+  }
+
+    // get data from SHT31 sensor
+    float t = sht31.readTemperature();
+    float h = sht31.readHumidity();
+    float f=32+(9*t)/5;
+    arrayVariableValues[4]=f;
+    arrayVariableValues[5]=h;
+    arrayVariableValues[6]=t;
+
+    // send data to cws
+    dweetdata();//upload it 
+
+    // send data to influx
+    influx.setDbAuth(INFLUXDB_DB, INFLUXDB_USER, INFLUXDB_PASS);
+    InfluxData row("Particles");
+    row.addTag("device", device);
+    row.addTag("sensor", "one");
+    row.addTag("mode", "pwm");
+    row.addValue("pm01", PM01Value);
+    row.addValue("pm2_5", PM2_5Value);
+    row.addValue("pm10", PM10Value);
+    row.addValue("temperature", t);
+    row.addValue("humidity", h);
+    influx.write(row);
+
+    //send data to serial monitor
+    Serial.print("pm1: ");
+    Serial.println(arrayVariableValues[1]);
+    Serial.print("pm2_5: ");
+    Serial.println(arrayVariableValues[2]);
+    Serial.print("pm10: ");
+    Serial.println(arrayVariableValues[3]);
+    Serial.print("f: ");
+    Serial.println(arrayVariableValues[4]);
+    Serial.print("h: ");
+    Serial.println(arrayVariableValues[5]);
+    Serial.print("t: ");
+    Serial.println(arrayVariableValues[6]);
+
+    
+    //ESP.deepSleep(300e6);  //sleep for 5 minutes
+    
+}
+
+//connects TCP,sends dweet,drops connection, prints the server response on the console
+void dweetdata(){
+  // Use WiFiClient class to create TCP connections 
+  WiFiClient client;
+  const int httpPort = 80;
+  if (!client.connect(host, httpPort)) { 
+    Serial.println("connection failed"); 
+    return; 
+  } 
+  client.print(GetDweetStringHttpBuilder()); 
+  //slow doown ...stability stuff
+  delay(1000);
+  // Read all the lines of the reply from dweet server and print them to Serial 
+  while(client.available()){ 
+    String line = client.readStringUntil('\r'); 
+    //Serial.print(line); 
+  } 
+  //just display ending conection on the serial port 
+  Serial.println(); 
+  Serial.println("closing connection"); 
+}
+
+String GetDweetStringHttpBuilder() {
+  int i=0; 
+  String dweetHttpGet="GET /brenchies/"; //initial empty get request
+  dweetHttpGet=dweetHttpGet+String(thingName)+"&"; //start concatenating the thing name (dweet.io)
+  for(i=0;i<(numberVariables);i++){ //concatenate all the variable names and values
+  if(i==numberVariables-1){ 
+    dweetHttpGet=dweetHttpGet +  String(arrayVariableNames[i]) + "="+ String( arrayVariableValues[i]); //the lastone doesnt have a "&" at the end 
+  }
+  else 
+    dweetHttpGet=dweetHttpGet + String(arrayVariableNames[i]) + "="+ String( arrayVariableValues[i]) + "&";   
+  }
+  dweetHttpGet=dweetHttpGet + " HTTP/1.1\r\n" + "Host: " + host + "\r\n" + "Connection: close\r\n\r\n"; 
+  return dweetHttpGet; //this is our freshly made http string request 
+}
