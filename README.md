@@ -1,2 +1,9 @@
 # airuba
-testing a variety of sensors and platforms for collecting and sharing air quality and other environmental data in Aruba 
+Code for testing air quality monitoring stations in Aruba
+
+Other related repositories include:
+
+https://github.com/brenchies/smart-citizen-codes
+
+and 
+
