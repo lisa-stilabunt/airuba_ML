@@ -6,7 +6,7 @@ Make sure to add your adafruit and wifi credentials in the config.h file
 
 More details about the project are here:
 
-science.brenchies.com/air-quality
+https://science.brenchies.com/air-quality
 
 Other related repositories include:
 
